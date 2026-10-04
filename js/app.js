@@ -1,0 +1,484 @@
+/**
+ * Dienstplan / Duty Roster Web Application Logic
+ */
+
+const FIELDS = [
+  { key: "date", label: "Date", default: "Datum", required: true },
+  { key: "room", label: "Room", default: "Raum", required: false },
+  { key: "start", label: "Start", default: "Von", required: true },
+  { key: "end", label: "End", default: "Bis", required: false },
+  { key: "title", label: "Title", default: "Kurztitel", required: true },
+  { key: "type", label: "Type", default: "Terminart", required: false },
+];
+
+const GERMAN_MONTHS = {
+  jan: 0,
+  jän: 0,
+  jaen: 0,
+  feb: 1,
+  mär: 2,
+  maer: 2,
+  mar: 2,
+  apr: 3,
+  mai: 4,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  okt: 9,
+  oct: 9,
+  nov: 10,
+  dez: 11,
+  dec: 11,
+};
+
+let rawRows = [];
+let headerRowIndex = -1;
+let headers = [];
+let columnMapping = {};
+let parsedEvents = [];
+let defaultMonthYear = "dienstplan";
+
+// Elements
+const fileInput = document.getElementById("file");
+const exportBtn = document.getElementById("export");
+const mappingSection = document.getElementById("mapping");
+const statusEl = document.getElementById("status");
+const calendarEl = document.getElementById("calendar");
+
+fileInput.addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  statusEl.textContent = "Reading spreadsheet...";
+  exportBtn.disabled = true;
+  calendarEl.innerHTML = "";
+  mappingSection.innerHTML = "";
+  mappingSection.hidden = true;
+
+  try {
+    rawRows = await XlsxReader.read(file);
+    if (!rawRows || rawRows.length === 0) {
+      statusEl.textContent = "The uploaded file is empty.";
+      return;
+    }
+
+    initColumnMapping();
+    processData();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = `Error reading file: ${err.message}`;
+  }
+});
+
+function initColumnMapping() {
+  headerRowIndex = rawRows.findIndex((row) => row.some((cell) => cell.trim().length > 0));
+  if (headerRowIndex === -1) {
+    statusEl.textContent = "Could not find any header rows.";
+    return;
+  }
+
+  headers = rawRows[headerRowIndex].map((h) => h.trim());
+
+  // Default mapping matching by name
+  columnMapping = {};
+  for (const field of FIELDS) {
+    const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
+    columnMapping[field.key] = idx !== -1 ? idx : -1;
+  }
+
+  renderMappingUI();
+}
+
+function renderMappingUI() {
+  mappingSection.innerHTML = "<h3>Column Mapping</h3>";
+  const grid = document.createElement("div");
+  grid.className = "mapping-grid";
+
+  for (const field of FIELDS) {
+    const item = document.createElement("div");
+    item.className = "mapping-item";
+
+    const label = document.createElement("label");
+    label.textContent = `${field.label}${field.required ? " *" : ""}:`;
+    label.htmlFor = `map-${field.key}`;
+
+    const select = document.createElement("select");
+    select.id = `map-${field.key}`;
+
+    const noneOpt = document.createElement("option");
+    noneOpt.value = "-1";
+    noneOpt.textContent = "— Not used —";
+    select.appendChild(noneOpt);
+
+    headers.forEach((h, idx) => {
+      const opt = document.createElement("option");
+      opt.value = String(idx);
+      opt.textContent = `${h || `(Column ${idx + 1})`}`;
+      if (columnMapping[field.key] === idx) {
+        opt.selected = true;
+      }
+      select.appendChild(opt);
+    });
+
+    select.addEventListener("change", (e) => {
+      columnMapping[field.key] = parseInt(e.target.value, 10);
+      processData();
+    });
+
+    item.appendChild(label);
+    item.appendChild(select);
+    grid.appendChild(item);
+  }
+
+  mappingSection.appendChild(grid);
+  mappingSection.hidden = false;
+}
+
+function parseDateCell(val, lastDate) {
+  if (!val || !val.trim()) {
+    return lastDate ? new Date(lastDate.getTime()) : null;
+  }
+
+  val = val.trim();
+
+  // Check Excel serial number (e.g. 46357)
+  const num = Number(val);
+  if (!isNaN(num) && num > 30000 && num < 100000) {
+    // Excel base date: 1899-12-30 (due to leap year 1900 bug)
+    const d = new Date(Date.UTC(1899, 11, 30));
+    d.setUTCDate(d.getUTCDate() + Math.floor(num));
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  }
+
+  // Check DD.MM.YYYY
+  const dotMatch = val.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (dotMatch) {
+    const day = parseInt(dotMatch[1], 10);
+    const month = parseInt(dotMatch[2], 10) - 1;
+    const year = parseInt(dotMatch[3], 10);
+    return new Date(year, month, day);
+  }
+
+  // Check "01 Dez 2026" or "1 Dez 2026"
+  const wordMatch = val.match(/^(\d{1,2})\.?\s+([A-Za-zÄäÖöÜü]+)\.?\s+(\d{4})$/);
+  if (wordMatch) {
+    const day = parseInt(wordMatch[1], 10);
+    const mStr = wordMatch[2].toLowerCase();
+    const year = parseInt(wordMatch[3], 10);
+    const month = GERMAN_MONTHS[mStr];
+    if (month !== undefined) {
+      return new Date(year, month, day);
+    }
+  }
+
+  // Fallback: standard Date.parse
+  const parsed = new Date(val);
+  if (!isNaN(parsed.getTime())) {
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  }
+
+  return null;
+}
+
+function parseTimeCell(val) {
+  if (!val) return null;
+  val = String(val).trim();
+
+  // Excel day fraction (e.g., 0.458333)
+  const num = Number(val);
+  if (!isNaN(num) && num >= 0 && num < 1) {
+    const totalMinutes = Math.round(num * 24 * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return { hours, minutes };
+  }
+
+  const match = val.match(/^(\d{1,2}):(\d{2})/);
+  if (match) {
+    const hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    if (hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60) {
+      return { hours, minutes };
+    }
+  }
+
+  return null;
+}
+
+function processData() {
+  for (const field of FIELDS) {
+    if (field.required && columnMapping[field.key] === -1) {
+      statusEl.textContent = `Please select a column for required field: ${field.label}`;
+      calendarEl.innerHTML = "";
+      exportBtn.disabled = true;
+      return;
+    }
+  }
+
+  parsedEvents = [];
+  let skippedCount = 0;
+  let lastSeenDate = null;
+
+  const dataRows = rawRows.slice(headerRowIndex + 1);
+
+  dataRows.forEach((row, rowIndex) => {
+    const dateVal = columnMapping.date !== -1 ? (row[columnMapping.date] || "") : "";
+    const startVal = columnMapping.start !== -1 ? (row[columnMapping.start] || "") : "";
+    const endVal = columnMapping.end !== -1 ? (row[columnMapping.end] || "") : "";
+    const titleVal = columnMapping.title !== -1 ? (row[columnMapping.title] || "").trim() : "";
+    const roomVal = columnMapping.room !== -1 ? (row[columnMapping.room] || "").trim() : "";
+    const typeVal = columnMapping.type !== -1 ? (row[columnMapping.type] || "").trim() : "";
+
+    // Ignore completely empty rows
+    if (!dateVal && !startVal && !titleVal) {
+      return;
+    }
+
+    const eventDate = parseDateCell(dateVal, lastSeenDate);
+    if (eventDate) {
+      lastSeenDate = eventDate;
+    }
+
+    const startTime = parseTimeCell(startVal);
+
+    if (!eventDate || !startTime || !titleVal) {
+      skippedCount++;
+      return;
+    }
+
+    const startDateTime = new Date(
+      eventDate.getFullYear(),
+      eventDate.getMonth(),
+      eventDate.getDate(),
+      startTime.hours,
+      startTime.minutes,
+      0
+    );
+
+    let endDateTime = null;
+    let endUnknown = false;
+    const endTime = parseTimeCell(endVal);
+
+    if (endTime) {
+      endDateTime = new Date(
+        eventDate.getFullYear(),
+        eventDate.getMonth(),
+        eventDate.getDate(),
+        endTime.hours,
+        endTime.minutes,
+        0
+      );
+      // If end time is earlier or equal to start time, it spans past midnight
+      if (endDateTime <= startDateTime) {
+        endDateTime.setDate(endDateTime.getDate() + 1);
+      }
+    } else {
+      // Missing or "?" -> default 3 hours duration
+      endDateTime = new Date(startDateTime.getTime() + 3 * 3600 * 1000);
+      endUnknown = true;
+    }
+
+    // Stable UID
+    const dateStr = startDateTime.toISOString().slice(0, 10).replace(/-/g, "");
+    const timeStr = `${String(startTime.hours).padStart(2, "0")}${String(startTime.minutes).padStart(2, "0")}`;
+    const slug = (str) =>
+      str.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
+    const uid = `${dateStr}T${timeStr}-${slug(titleVal)}-${slug(roomVal || "event")}@dienstplan`;
+
+    parsedEvents.push({
+      id: `ev-${rowIndex}`,
+      uid,
+      date: eventDate,
+      start: startDateTime,
+      end: endDateTime,
+      endUnknown,
+      title: titleVal,
+      room: roomVal,
+      type: typeVal,
+      checked: true,
+    });
+  });
+
+  // Sort events chronologically
+  parsedEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  if (parsedEvents.length > 0) {
+    const firstEvent = parsedEvents[0];
+    const y = firstEvent.start.getFullYear();
+    const m = String(firstEvent.start.getMonth() + 1).padStart(2, "0");
+    defaultMonthYear = `dienstplan-${y}-${m}`;
+  }
+
+  renderCalendar();
+  updateStatus(skippedCount);
+}
+
+function updateStatus(skippedCount = 0) {
+  const selectedCount = parsedEvents.filter((e) => e.checked).length;
+  const totalCount = parsedEvents.length;
+
+  let msg = `${selectedCount} of ${totalCount} appointments selected.`;
+  if (skippedCount > 0) {
+    msg += ` (${skippedCount} rows skipped due to missing date, time, or title).`;
+  }
+  statusEl.textContent = msg;
+
+  exportBtn.disabled = selectedCount === 0;
+}
+
+function renderCalendar() {
+  calendarEl.innerHTML = "";
+
+  if (parsedEvents.length === 0) {
+    statusEl.textContent = "No valid appointments found in the file.";
+    exportBtn.disabled = true;
+    return;
+  }
+
+  // Group events by Month (key: YYYY-MM)
+  const monthGroups = new Map();
+  for (const event of parsedEvents) {
+    const key = `${event.start.getFullYear()}-${String(event.start.getMonth() + 1).padStart(2, "0")}`;
+    if (!monthGroups.has(key)) {
+      monthGroups.set(key, []);
+    }
+    monthGroups.get(key).push(event);
+  }
+
+  for (const [monthKey, events] of monthGroups.entries()) {
+    const [yearStr, monthStr] = monthKey.split("-");
+    const year = parseInt(yearStr, 10);
+    const monthIndex = parseInt(monthStr, 10) - 1;
+
+    const monthContainer = document.createElement("section");
+    monthContainer.className = "month-container";
+
+    const titleEl = document.createElement("h2");
+    const monthName = new Intl.DateTimeFormat("en-GB", {
+      month: "long",
+      year: "numeric",
+    }).format(new Date(year, monthIndex, 1));
+    titleEl.textContent = monthName;
+    monthContainer.appendChild(titleEl);
+
+    const grid = document.createElement("div");
+    grid.className = "calendar-grid";
+
+    // Day of week headers (Mon - Sun)
+    const dayHeaders = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    for (const dh of dayHeaders) {
+      const hCell = document.createElement("div");
+      hCell.className = "day-header";
+      hCell.textContent = dh;
+      grid.appendChild(hCell);
+    }
+
+    const firstDayOfMonth = new Date(year, monthIndex, 1);
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+
+    // Monday-based offset (0 for Mon, 6 for Sun)
+    const leadingEmptyDays = (firstDayOfMonth.getDay() + 6) % 7;
+
+    for (let i = 0; i < leadingEmptyDays; i++) {
+      const blankCell = document.createElement("div");
+      blankCell.className = "day-cell empty";
+      grid.appendChild(blankCell);
+    }
+
+    // Days map
+    const dayEventsMap = new Map();
+    for (const ev of events) {
+      const dayNum = ev.start.getDate();
+      if (!dayEventsMap.has(dayNum)) {
+        dayEventsMap.set(dayNum, []);
+      }
+      dayEventsMap.get(dayNum).push(ev);
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const cell = document.createElement("div");
+      cell.className = "day-cell";
+
+      const dayDate = new Date(year, monthIndex, day);
+      const isWeekend = dayDate.getDay() === 0 || dayDate.getDay() === 6;
+      if (isWeekend) {
+        cell.classList.add("weekend");
+      }
+
+      const numEl = document.createElement("div");
+      numEl.className = "day-number";
+      numEl.textContent = String(day);
+      cell.appendChild(numEl);
+
+      const eventsList = dayEventsMap.get(day) || [];
+      const eventsContainer = document.createElement("div");
+      eventsContainer.className = "day-events";
+
+      for (const ev of eventsList) {
+        const evRow = document.createElement("label");
+        evRow.className = `event-item${ev.checked ? "" : " off"}`;
+
+        const chk = document.createElement("input");
+        chk.type = "checkbox";
+        chk.checked = ev.checked;
+
+        chk.addEventListener("change", (e) => {
+          e.stopPropagation();
+          ev.checked = chk.checked;
+          if (ev.checked) {
+            evRow.classList.remove("off");
+          } else {
+            evRow.classList.add("off");
+          }
+          updateStatus();
+        });
+
+        const pad = (n) => String(n).padStart(2, "0");
+        const timeLabel = `${pad(ev.start.getHours())}:${pad(ev.start.getMinutes())}`;
+        const endLabel = `${pad(ev.end.getHours())}:${pad(ev.end.getMinutes())}`;
+
+        const textSpan = document.createElement("span");
+        textSpan.className = "event-title";
+        textSpan.textContent = `${timeLabel} ${ev.title}`;
+
+        // Tooltip text
+        const tooltipLines = [
+          ev.title,
+          `${pad(ev.start.getDate())}.${pad(ev.start.getMonth() + 1)}.${ev.start.getFullYear()}, ${timeLabel}–${endLabel}${ev.endUnknown ? " (end unknown)" : ""}`,
+        ];
+        if (ev.room) tooltipLines.push(`Room: ${ev.room}`);
+        if (ev.type) tooltipLines.push(`Type: ${ev.type}`);
+        evRow.title = tooltipLines.join("\n");
+
+        evRow.appendChild(chk);
+        evRow.appendChild(textSpan);
+        eventsContainer.appendChild(evRow);
+      }
+
+      cell.appendChild(eventsContainer);
+      grid.appendChild(cell);
+    }
+
+    monthContainer.appendChild(grid);
+    calendarEl.appendChild(monthContainer);
+  }
+}
+
+exportBtn.addEventListener("click", () => {
+  const checkedEvents = parsedEvents.filter((e) => e.checked);
+  if (checkedEvents.length === 0) return;
+
+  const icsText = IcsWriter.buildIcs(checkedEvents);
+  const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${defaultMonthYear}.ics`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});

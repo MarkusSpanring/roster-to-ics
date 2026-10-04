@@ -1,0 +1,4 @@
+*.xlsx
+!sample/dummy.xlsx
+*.ics
+.DS_Store
