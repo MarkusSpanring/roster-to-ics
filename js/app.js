@@ -2,6 +2,19 @@
  * Dienstplan / Duty Roster Web Application Logic
  */
 
+const DEFAULT_HEADERS = [
+  "Datum",
+  "Tag",
+  "Typ",
+  "Raum",
+  "Von",
+  "Bis",
+  "Kurztitel",
+  "Eigentümer",
+  "Terminart",
+  "Dispo extern",
+];
+
 const FIELDS = [
   { key: "date", label: "Date", default: "Datum", required: true },
   { key: "room", label: "Room", default: "Raum", required: false },
@@ -35,12 +48,13 @@ const GERMAN_MONTHS = {
 
 let rawRows = [];
 let headerRowIndex = -1;
-let headers = [];
+let headers = [...DEFAULT_HEADERS];
 let columnMapping = {};
 let parsedEvents = [];
 let defaultMonthYear = "dienstplan";
+let tempMapping = {};
 
-// Elements
+// DOM Elements
 const fileInput = document.getElementById("file");
 const exportBtn = document.getElementById("export");
 const settingsBtn = document.getElementById("settings-btn");
@@ -48,6 +62,7 @@ const statusEl = document.getElementById("status");
 const statusChipEl = document.getElementById("status-chip");
 const statusIconEl = document.getElementById("status-icon");
 const calendarEl = document.getElementById("calendar");
+const legendEl = document.getElementById("calendar-legend");
 
 // Modal Elements
 const settingsModal = document.getElementById("settings-modal");
@@ -57,7 +72,28 @@ const modalApplyBtn = document.getElementById("modal-apply-btn");
 const previewTableEl = document.getElementById("preview-table");
 const mappingFieldsEl = document.getElementById("mapping-fields");
 
-let tempMapping = {};
+// Initialise default column mappings
+function initDefaultMapping() {
+  // Load saved mapping from localStorage if available
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem("dienstplan_column_mapping"));
+  } catch (e) {
+    // Ignore error
+  }
+
+  columnMapping = {};
+  for (const field of FIELDS) {
+    if (saved && saved[field.key] !== undefined) {
+      columnMapping[field.key] = saved[field.key];
+    } else {
+      const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
+      columnMapping[field.key] = idx !== -1 ? idx : -1;
+    }
+  }
+}
+
+initDefaultMapping();
 
 fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -65,8 +101,8 @@ fileInput.addEventListener("change", async (e) => {
 
   setStatus("Reading spreadsheet...", "⏳", "loading");
   exportBtn.disabled = true;
-  settingsBtn.disabled = true;
   calendarEl.innerHTML = "";
+  legendEl.hidden = true;
 
   try {
     rawRows = await XlsxReader.read(file);
@@ -75,8 +111,7 @@ fileInput.addEventListener("change", async (e) => {
       return;
     }
 
-    initColumnMapping();
-    settingsBtn.disabled = false;
+    updateHeadersFromRows();
     processData();
   } catch (err) {
     console.error(err);
@@ -90,20 +125,22 @@ function setStatus(text, icon = "ℹ️", state = "default") {
   statusChipEl.className = `status-chip ${state}`;
 }
 
-function initColumnMapping() {
+function updateHeadersFromRows() {
   headerRowIndex = rawRows.findIndex((row) => row.some((cell) => cell.trim().length > 0));
   if (headerRowIndex === -1) {
-    setStatus("Could not find any header rows.", "⚠️", "warning");
+    setStatus("Could not find any header rows in the file.", "⚠️", "warning");
     return;
   }
 
   headers = rawRows[headerRowIndex].map((h) => h.trim());
 
-  // Default mapping matching by name
-  columnMapping = {};
+  // Re-verify mappings against newly loaded headers
   for (const field of FIELDS) {
-    const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
-    columnMapping[field.key] = idx !== -1 ? idx : -1;
+    // If current mapped index is out of bounds or unmapped, attempt auto-match
+    if (columnMapping[field.key] === -1 || columnMapping[field.key] >= headers.length) {
+      const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
+      columnMapping[field.key] = idx !== -1 ? idx : -1;
+    }
   }
 }
 
@@ -136,8 +173,19 @@ modalCancelBtn.addEventListener("click", closeSettingsModal);
 
 modalApplyBtn.addEventListener("click", () => {
   columnMapping = { ...tempMapping };
+  try {
+    localStorage.setItem("dienstplan_column_mapping", JSON.stringify(columnMapping));
+  } catch (e) {
+    // Ignore storage errors
+  }
+
   closeSettingsModal();
-  processData();
+
+  if (rawRows.length > 0) {
+    processData();
+  } else {
+    setStatus("Column mapping saved. Choose an .xlsx file to import.", "✅", "success");
+  }
 });
 
 // Close modal when clicking outside or pressing Escape
@@ -162,24 +210,35 @@ function renderPreviewTable() {
   headers.forEach((h, idx) => {
     const th = document.createElement("th");
     const colName = indexToColLetter(idx);
-    th.innerHTML = `<span class="col-badge">${colName}</span> ${h || `(Col ${idx + 1})`}`;
+    th.innerHTML = `<span class="col-badge">${colName}</span> ${escapeHtml(h) || `(Col ${idx + 1})`}`;
     headRow.appendChild(th);
   });
   thead.appendChild(headRow);
   previewTableEl.appendChild(thead);
 
   const tbody = document.createElement("tbody");
-  const dataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 6); // preview first 5 data rows
 
-  dataRows.forEach((row) => {
-    const tr = document.createElement("tr");
-    headers.forEach((_, idx) => {
-      const td = document.createElement("td");
-      td.textContent = row[idx] !== undefined ? row[idx] : "";
-      tr.appendChild(td);
+  if (rawRows.length > 0 && headerRowIndex !== -1) {
+    const dataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 6); // preview first 5 data rows
+    dataRows.forEach((row) => {
+      const tr = document.createElement("tr");
+      headers.forEach((_, idx) => {
+        const td = document.createElement("td");
+        td.textContent = row[idx] !== undefined ? row[idx] : "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
     });
+  } else {
+    // Show placeholder row before upload
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = headers.length;
+    td.className = "preview-empty-hint";
+    td.textContent = "No file loaded yet. Standard column headers are shown above. Upload an .xlsx file to preview its rows.";
+    tr.appendChild(td);
     tbody.appendChild(tr);
-  });
+  }
 
   previewTableEl.appendChild(tbody);
 }
@@ -222,6 +281,59 @@ function renderMappingUI() {
     item.appendChild(select);
     mappingFieldsEl.appendChild(item);
   }
+}
+
+// Event Type Color-Coding Logic
+const EVENT_CATEGORIES = [
+  {
+    key: "vorst",
+    name: "Performance",
+    keywords: ["vorst", "erstev", "letztev"],
+    className: "cat-vorst",
+  },
+  {
+    key: "prem",
+    name: "Premiere / Revival",
+    keywords: ["prem", "wa"],
+    className: "cat-prem",
+  },
+  {
+    key: "probe",
+    name: "Stage Rehearsal (BOP / GP / HP)",
+    keywords: ["bop", "hp", "gp", "gp öff", "ohp"],
+    className: "cat-probe",
+  },
+  {
+    key: "sitz",
+    name: "Music / Room Rehearsal (OA / SondPr)",
+    keywords: ["oa", "ositz", "sondpr", "probe"],
+    className: "cat-sitz",
+  },
+  {
+    key: "konz",
+    name: "Concert / Ball",
+    keywords: ["konz", "ball"],
+    className: "cat-konz",
+  },
+  {
+    key: "schul",
+    name: "School Event",
+    keywords: ["schul"],
+    className: "cat-schul",
+  },
+];
+
+function getCategoryForType(typeStr) {
+  if (!typeStr) return { key: "other", name: "Other", className: "cat-other" };
+  const lower = typeStr.toLowerCase().trim();
+
+  for (const cat of EVENT_CATEGORIES) {
+    if (cat.keywords.some((k) => lower.includes(k))) {
+      return cat;
+    }
+  }
+
+  return { key: "other", name: "Other", className: "cat-other" };
 }
 
 function parseDateCell(val, lastDate) {
@@ -299,6 +411,7 @@ function processData() {
     if (field.required && columnMapping[field.key] === -1) {
       setStatus(`Missing mapping for required field: ${field.label}. Open Settings to select.`, "⚠️", "warning");
       calendarEl.innerHTML = "";
+      legendEl.hidden = true;
       exportBtn.disabled = true;
       return;
     }
@@ -374,6 +487,8 @@ function processData() {
       str.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 20);
     const uid = `${dateStr}T${timeStr}-${slug(titleVal)}-${slug(roomVal || "event")}@dienstplan`;
 
+    const category = getCategoryForType(typeVal);
+
     parsedEvents.push({
       id: `ev-${rowIndex}`,
       uid,
@@ -384,6 +499,7 @@ function processData() {
       title: titleVal,
       room: roomVal,
       type: typeVal,
+      category,
       checked: true,
     });
   });
@@ -398,8 +514,44 @@ function processData() {
     defaultMonthYear = `dienstplan-${y}-${m}`;
   }
 
+  renderLegend();
   renderCalendar();
   updateStatus(skippedCount);
+}
+
+function renderLegend() {
+  legendEl.innerHTML = "";
+  if (parsedEvents.length === 0) {
+    legendEl.hidden = true;
+    return;
+  }
+
+  // Find all categories that actually appear in the events
+  const presentCategories = new Set(parsedEvents.map((e) => e.category.key));
+  const activeList = EVENT_CATEGORIES.filter((c) => presentCategories.has(c.key));
+
+  if (presentCategories.has("other")) {
+    activeList.push({ key: "other", name: "Other", className: "cat-other" });
+  }
+
+  if (activeList.length === 0) {
+    legendEl.hidden = true;
+    return;
+  }
+
+  const label = document.createElement("span");
+  label.className = "legend-label";
+  label.textContent = "Event Types:";
+  legendEl.appendChild(label);
+
+  for (const cat of activeList) {
+    const item = document.createElement("div");
+    item.className = `legend-item ${cat.className}`;
+    item.innerHTML = `<span class="legend-swatch"></span><span>${cat.name}</span>`;
+    legendEl.appendChild(item);
+  }
+
+  legendEl.hidden = false;
 }
 
 function updateStatus(skippedCount = 0) {
@@ -505,7 +657,7 @@ function renderCalendar() {
 
       for (const ev of eventsList) {
         const evRow = document.createElement("label");
-        evRow.className = `event-item${ev.checked ? "" : " off"}`;
+        evRow.className = `event-item ${ev.category.className}${ev.checked ? "" : " off"}`;
 
         const chk = document.createElement("input");
         chk.type = "checkbox";
@@ -526,9 +678,30 @@ function renderCalendar() {
         const timeLabel = `${pad(ev.start.getHours())}:${pad(ev.start.getMinutes())}`;
         const endLabel = `${pad(ev.end.getHours())}:${pad(ev.end.getMinutes())}`;
 
-        const textSpan = document.createElement("span");
-        textSpan.className = "event-title";
-        textSpan.innerHTML = `<strong class="event-time">${timeLabel}</strong> ${escapeHtml(ev.title)}`;
+        const detailsDiv = document.createElement("div");
+        detailsDiv.className = "event-details";
+
+        const topRow = document.createElement("div");
+        topRow.className = "event-top-row";
+
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "event-time";
+        timeSpan.textContent = timeLabel;
+        topRow.appendChild(timeSpan);
+
+        if (ev.type) {
+          const badgeSpan = document.createElement("span");
+          badgeSpan.className = "event-badge";
+          badgeSpan.textContent = ev.type;
+          topRow.appendChild(badgeSpan);
+        }
+
+        const titleSpan = document.createElement("span");
+        titleSpan.className = "event-title";
+        titleSpan.textContent = ev.title;
+
+        detailsDiv.appendChild(topRow);
+        detailsDiv.appendChild(titleSpan);
 
         // Tooltip text
         const tooltipLines = [
@@ -540,7 +713,7 @@ function renderCalendar() {
         evRow.title = tooltipLines.join("\n");
 
         evRow.appendChild(chk);
-        evRow.appendChild(textSpan);
+        evRow.appendChild(detailsDiv);
         eventsContainer.appendChild(evRow);
       }
 

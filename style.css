@@ -220,6 +220,112 @@ body {
 }
 
 /* ==========================================================================
+   Legend Bar
+   ========================================================================== */
+
+.legend-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.legend-label {
+  font-weight: 600;
+  color: #475569;
+  margin-right: 0.25rem;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #334155;
+  font-weight: 500;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--chip-accent);
+}
+
+/* ==========================================================================
+   Category Color Themes
+   ========================================================================== */
+
+.cat-vorst {
+  --chip-bg: #faf5ff;
+  --chip-border: #e9d5ff;
+  --chip-accent: #9333ea;
+  --chip-text: #581c87;
+  --badge-bg: #f3e8ff;
+  --badge-text: #6b21a8;
+}
+
+.cat-prem {
+  --chip-bg: #fff1f2;
+  --chip-border: #fecdd3;
+  --chip-accent: #e11d48;
+  --chip-text: #881337;
+  --badge-bg: #ffe4e6;
+  --badge-text: #9f1239;
+}
+
+.cat-probe {
+  --chip-bg: #eff6ff;
+  --chip-border: #bfdbfe;
+  --chip-accent: #2563eb;
+  --chip-text: #1e3a8a;
+  --badge-bg: #dbeafe;
+  --badge-text: #1d4ed8;
+}
+
+.cat-sitz {
+  --chip-bg: #ecfeff;
+  --chip-border: #a5f3fc;
+  --chip-accent: #0891b2;
+  --chip-text: #155e75;
+  --badge-bg: #cffafe;
+  --badge-text: #0e7490;
+}
+
+.cat-konz {
+  --chip-bg: #fffbeb;
+  --chip-border: #fde68a;
+  --chip-accent: #d97706;
+  --chip-text: #78350f;
+  --badge-bg: #fef3c7;
+  --badge-text: #b45309;
+}
+
+.cat-schul {
+  --chip-bg: #f0fdf4;
+  --chip-border: #bbf7d0;
+  --chip-accent: #16a34a;
+  --chip-text: #14532d;
+  --badge-bg: #dcfce7;
+  --badge-text: #15803d;
+}
+
+.cat-other {
+  --chip-bg: #f8fafc;
+  --chip-border: #cbd5e1;
+  --chip-accent: #64748b;
+  --chip-text: #334155;
+  --badge-bg: #e2e8f0;
+  --badge-text: #475569;
+}
+
+/* ==========================================================================
    Calendar View
    ========================================================================== */
 
@@ -304,15 +410,15 @@ body {
 /* Event Item Chip */
 .event-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.45rem;
-  background: #f0f7ff;
-  border: 1px solid #d0e7ff;
-  border-left: 3.5px solid #2563eb;
-  color: #1e3a8a;
-  padding: 0.3rem 0.5rem;
+  background: var(--chip-bg, #f8fafc);
+  border: 1px solid var(--chip-border, #e2e8f0);
+  border-left: 3.5px solid var(--chip-accent, #64748b);
+  color: var(--chip-text, #1e293b);
+  padding: 0.3rem 0.45rem;
   border-radius: 6px;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   cursor: pointer;
   user-select: none;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -320,31 +426,60 @@ body {
 }
 
 .event-item:hover {
-  background: #e0f0fe;
+  filter: brightness(0.97);
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
 }
 
 .event-item input[type="checkbox"] {
   cursor: pointer;
-  margin: 0;
+  margin: 0.15rem 0 0 0;
   width: 14px;
   height: 14px;
-  accent-color: #2563eb;
+  accent-color: var(--chip-accent, #2563eb);
   flex-shrink: 0;
+}
+
+.event-details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex-grow: 1;
+}
+
+.event-top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  line-height: 1.2;
+}
+
+.event-time {
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--chip-accent, #1e293b);
+  flex-shrink: 0;
+}
+
+.event-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  background: var(--badge-bg, #e2e8f0);
+  color: var(--badge-text, #334155);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .event-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-grow: 1;
-}
-
-.event-time {
-  font-weight: 600;
-  color: #1d4ed8;
-  margin-right: 0.2rem;
+  font-weight: 500;
+  font-size: 0.79rem;
+  line-height: 1.25;
 }
 
 .event-item.off {
@@ -353,17 +488,20 @@ body {
   border-left-color: #94a3b8;
   color: #94a3b8;
   text-decoration: line-through;
-  opacity: 0.6;
+  opacity: 0.55;
   box-shadow: none;
 }
 
 .event-item.off:hover {
   background: #f1f5f9;
   transform: none;
+  filter: none;
 }
 
-.event-item.off .event-time {
+.event-item.off .event-time,
+.event-item.off .event-badge {
   color: #94a3b8;
+  background: #e2e8f0;
 }
 
 /* ==========================================================================
@@ -525,6 +663,13 @@ body {
 
 .preview-table tbody tr:hover {
   background: #f0f7ff;
+}
+
+.preview-empty-hint {
+  text-align: center;
+  padding: 2.2rem 1rem !important;
+  color: #64748b;
+  font-style: italic;
 }
 
 /* Mapping Grid */
