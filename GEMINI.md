@@ -12,6 +12,8 @@ Implement Only What is Agreed: Stick exactly to the requested task.
 
 No Overengineering: Do not add unprompted features, "nice-to-haves," or premature abstractions. Keep the solution focused strictly on the discussed requirements.
 
+Do not run any git commands that modify the state. You may run git commands to inspect the code.
+
 3. Code Quality and Maintenance
 
 Avoid Redundancy: Do not write redundant or duplicate code. Ensure DRY (Don't Repeat Yourself) principles are followed appropriately.
