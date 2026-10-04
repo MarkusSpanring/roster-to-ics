@@ -74,22 +74,10 @@ const mappingFieldsEl = document.getElementById("mapping-fields");
 
 // Initialise default column mappings
 function initDefaultMapping() {
-  // Load saved mapping from localStorage if available
-  let saved = null;
-  try {
-    saved = JSON.parse(localStorage.getItem("dienstplan_column_mapping"));
-  } catch (e) {
-    // Ignore error
-  }
-
   columnMapping = {};
   for (const field of FIELDS) {
-    if (saved && saved[field.key] !== undefined) {
-      columnMapping[field.key] = saved[field.key];
-    } else {
-      const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
-      columnMapping[field.key] = idx !== -1 ? idx : -1;
-    }
+    const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
+    columnMapping[field.key] = idx !== -1 ? idx : -1;
   }
 }
 
@@ -173,12 +161,6 @@ modalCancelBtn.addEventListener("click", closeSettingsModal);
 
 modalApplyBtn.addEventListener("click", () => {
   columnMapping = { ...tempMapping };
-  try {
-    localStorage.setItem("dienstplan_column_mapping", JSON.stringify(columnMapping));
-  } catch (e) {
-    // Ignore storage errors
-  }
-
   closeSettingsModal();
 
   if (rawRows.length > 0) {
@@ -490,9 +472,7 @@ function processData() {
     const category = getCategoryForType(typeVal);
 
     parsedEvents.push({
-      id: `ev-${rowIndex}`,
       uid,
-      date: eventDate,
       start: startDateTime,
       end: endDateTime,
       endUnknown,

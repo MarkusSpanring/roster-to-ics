@@ -3,6 +3,11 @@
  * Uses native DecompressionStream("deflate-raw") and DOMParser.
  */
 
+// Limits against crafted files (zip bombs, huge row/column numbers)
+const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
+const MAX_ROWS = 10000;
+const MAX_COLS = 100;
+
 class XlsxReader {
   /**
    * Parse a File or Blob of an .xlsx document.
@@ -103,12 +108,17 @@ class XlsxReader {
     const compressedData = bytes.subarray(dataOffset, dataOffset + entry.compressedSize);
 
     if (entry.compressionMethod === 0) {
-      // Stored (no compression)
+      if (compressedData.length > MAX_ENTRY_BYTES) {
+        throw new Error(`Entry ${targetName} exceeds size limit (${MAX_ENTRY_BYTES} bytes).`);
+      }
       return compressedData;
     }
 
     if (entry.compressionMethod === 8) {
-      // Deflate
+      if (entry.uncompressedSize > MAX_ENTRY_BYTES) {
+        throw new Error(`Entry ${targetName} exceeds size limit (${MAX_ENTRY_BYTES} bytes).`);
+      }
+
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(compressedData);
@@ -116,8 +126,27 @@ class XlsxReader {
         },
       });
       const decompressedStream = stream.pipeThrough(new DecompressionStream("deflate-raw"));
-      const decompressedBuffer = await new Response(decompressedStream).arrayBuffer();
-      return new Uint8Array(decompressedBuffer);
+      const reader = decompressedStream.getReader();
+      const chunks = [];
+      let totalBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.length;
+        if (totalBytes > MAX_ENTRY_BYTES) {
+          throw new Error(`Decompressed entry ${targetName} exceeds size limit (${MAX_ENTRY_BYTES} bytes).`);
+        }
+        chunks.push(value);
+      }
+
+      const result = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return result;
     }
 
     throw new Error(`Unsupported compression method (${entry.compressionMethod}) for ${targetName}`);
@@ -151,7 +180,14 @@ class XlsxReader {
       const relsXml = await this._readZipText(zipEntries, "xl/_rels/workbook.xml.rels");
       if (relsXml) {
         const relsDoc = parser.parseFromString(relsXml, "application/xml");
-        const rel = relsDoc.querySelector(`Relationship[Id="${rId}"]`);
+        const relElements = relsDoc.querySelectorAll("Relationship");
+        let rel = null;
+        for (let i = 0; i < relElements.length; i++) {
+          if (relElements[i].getAttribute("Id") === rId) {
+            rel = relElements[i];
+            break;
+          }
+        }
         if (rel) {
           let target = rel.getAttribute("Target");
           if (target) {
@@ -208,6 +244,8 @@ class XlsxReader {
       const rAttr = parseInt(rowEl.getAttribute("r"), 10);
       const rowIdx = !isNaN(rAttr) ? rAttr - 1 : r;
 
+      if (rowIdx < 0 || rowIdx >= MAX_ROWS) continue;
+
       if (!rows[rowIdx]) rows[rowIdx] = [];
 
       const cElements = rowEl.querySelectorAll("c");
@@ -221,6 +259,8 @@ class XlsxReader {
             colIdx = this._colRefToIndex(match[1]);
           }
         }
+
+        if (colIdx < 0 || colIdx >= MAX_COLS) continue;
 
         const tType = cEl.getAttribute("t");
         let cellVal = "";
@@ -243,15 +283,16 @@ class XlsxReader {
       }
     }
 
-    // Normalise array and fill holes
+    // Normalise array and fill holes within limits
     const result = [];
+    const rowCount = Math.min(rows.length, MAX_ROWS);
     let maxCols = 0;
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = 0; i < rowCount; i++) {
       const row = rows[i] || [];
-      if (row.length > maxCols) maxCols = row.length;
+      if (row.length > maxCols) maxCols = Math.min(row.length, MAX_COLS);
     }
 
-    for (let i = 0; i < rows.length; i++) {
+    for (let i = 0; i < rowCount; i++) {
       const row = rows[i] || [];
       const normalizedRow = [];
       for (let j = 0; j < maxCols; j++) {
