@@ -62,6 +62,51 @@ const sampleEntryContainer = document.getElementById("sample-entry-container");
 const previewTableEl = document.getElementById("preview-table");
 const mappingFieldsEl = document.getElementById("mapping-fields");
 
+// Theme Toggle Elements & Logic
+const themeToggleBtn = document.getElementById("theme-toggle");
+const themeIconEl = document.getElementById("theme-icon");
+const THEME_STORAGE_KEY = "dienstplan_theme";
+
+function initTheme() {
+  let theme = "light";
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "dark" || saved === "light") {
+      theme = saved;
+    } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      theme = "dark";
+    }
+  } catch (e) {
+    // Ignore storage errors
+  }
+  applyTheme(theme);
+}
+
+function applyTheme(theme) {
+  if (theme === "dark") {
+    document.documentElement.setAttribute("data-theme", "dark");
+    if (themeIconEl) themeIconEl.textContent = "☀️";
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    if (themeIconEl) themeIconEl.textContent = "🌙";
+  }
+}
+
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener("click", () => {
+    const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+    const nextTheme = isDark ? "light" : "dark";
+    applyTheme(nextTheme);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch (e) {
+      // Ignore storage errors
+    }
+  });
+}
+
+initTheme();
+
 // File input handler: instantly opens the import settings modal
 fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
