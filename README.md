@@ -8,19 +8,14 @@ Runs 100% locally in your browser. No internet connection, no servers, and no in
 
 ## Quick Start (For Users)
 
-1. Download or clone this repository to your computer.
-2. Double-click **`index.html`** to open it in your web browser (Safari, Chrome, or Firefox).
-3. Click **"Choose .xlsx File"** and select your schedule file.
-   - You can test this using the included `sample/dummy.xlsx` file.
-4. Review the column dropdowns if your column names differ from the defaults:
-   - **Date**: *Datum*
-   - **Room**: *Raum*
-   - **Start**: *Von*
-   - **End**: *Bis*
-   - **Title**: *Kurztitel*
-   - **Type**: *Terminart*
+1. Double-click **`index.html`** to open it in your web browser (Safari, Chrome, or Firefox).
+2. Click **"Import .xlsx File"** and choose your duty roster spreadsheet.
+3. The **Import Settings & Preview** dialog opens on the fly:
+   - Check the **Sample Calendar Entry** live preview to see how your appointments will appear.
+   - Adjust the column mappings if needed (supports standard columns as well as alternate formats like `BEG`, `ENDE`, `Vorstellung`).
+4. Click **"Confirm & View Calendar"**.
 5. In the calendar view, click on any appointments that are not relevant to you to uncheck and grey them out.
-   - Hover your mouse over any appointment to view complete details (times, room, type).
+   - Hover over any appointment to view full details (times, room, type).
 6. Click **"Export ICS"** to download your calendar file (`.ics`).
 7. Double-click the downloaded `.ics` file to import it into your calendar app.
 

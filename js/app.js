@@ -1,27 +1,14 @@
 /**
- * Dienstplan / Duty Roster Web Application Logic
+ * Duty Roster → Calendar Web Application Logic
  */
 
-const DEFAULT_HEADERS = [
-  "Datum",
-  "Tag",
-  "Typ",
-  "Raum",
-  "Von",
-  "Bis",
-  "Kurztitel",
-  "Eigentümer",
-  "Terminart",
-  "Dispo extern",
-];
-
 const FIELDS = [
-  { key: "date", label: "Date", default: "Datum", required: true },
-  { key: "room", label: "Room", default: "Raum", required: false },
-  { key: "start", label: "Start", default: "Von", required: true },
-  { key: "end", label: "End", default: "Bis", required: false },
-  { key: "title", label: "Title", default: "Kurztitel", required: true },
-  { key: "type", label: "Type", default: "Terminart", required: false },
+  { key: "date", label: "Date", aliases: ["datum", "date", "tag"], required: true },
+  { key: "start", label: "Start", aliases: ["von", "beg", "beginn", "start", "ab"], required: true },
+  { key: "end", label: "End", aliases: ["bis", "ende", "end", "schluss"], required: false },
+  { key: "title", label: "Title", aliases: ["kurztitel", "vorstellung", "titel", "title", "stück", "produktion"], required: true },
+  { key: "room", label: "Room", aliases: ["raum", "ort", "bühne", "room", "location"], required: false },
+  { key: "type", label: "Type", aliases: ["terminart", "typ", "art", "type"], required: false },
 ];
 
 const GERMAN_MONTHS = {
@@ -48,11 +35,12 @@ const GERMAN_MONTHS = {
 
 let rawRows = [];
 let headerRowIndex = -1;
-let headers = [...DEFAULT_HEADERS];
+let headers = [];
 let columnMapping = {};
+let tempMapping = {};
 let parsedEvents = [];
 let defaultMonthYear = "dienstplan";
-let tempMapping = {};
+let currentFileName = "";
 
 // DOM Elements
 const fileInput = document.getElementById("file");
@@ -66,28 +54,21 @@ const legendEl = document.getElementById("calendar-legend");
 
 // Modal Elements
 const settingsModal = document.getElementById("settings-modal");
+const modalDescEl = document.getElementById("modal-desc");
 const modalCloseBtn = document.getElementById("modal-close");
 const modalCancelBtn = document.getElementById("modal-cancel-btn");
 const modalApplyBtn = document.getElementById("modal-apply-btn");
+const sampleEntryContainer = document.getElementById("sample-entry-container");
 const previewTableEl = document.getElementById("preview-table");
 const mappingFieldsEl = document.getElementById("mapping-fields");
 
-// Initialise default column mappings
-function initDefaultMapping() {
-  columnMapping = {};
-  for (const field of FIELDS) {
-    const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
-    columnMapping[field.key] = idx !== -1 ? idx : -1;
-  }
-}
-
-initDefaultMapping();
-
+// File input handler: instantly opens the import settings modal
 fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  setStatus("Reading spreadsheet...", "⏳", "loading");
+  currentFileName = file.name;
+  setStatus(`Reading ${file.name}...`, "⏳", "loading");
   exportBtn.disabled = true;
   calendarEl.innerHTML = "";
   legendEl.hidden = true;
@@ -99,8 +80,14 @@ fileInput.addEventListener("change", async (e) => {
       return;
     }
 
-    updateHeadersFromRows();
-    processData();
+    headerRowIndex = detectHeaderRow(rawRows);
+    headers = rawRows[headerRowIndex].map((h) => h.trim());
+
+    initAutoMapping();
+
+    // Open import settings modal directly upon file selection
+    openSettingsModal();
+    setStatus(`Configuring import for ${currentFileName}...`, "⚙️", "default");
   } catch (err) {
     console.error(err);
     setStatus(`Error reading file: ${err.message}`, "❌", "error");
@@ -113,22 +100,121 @@ function setStatus(text, icon = "ℹ️", state = "default") {
   statusChipEl.className = `status-chip ${state}`;
 }
 
-function updateHeadersFromRows() {
-  headerRowIndex = rawRows.findIndex((row) => row.some((cell) => cell.trim().length > 0));
-  if (headerRowIndex === -1) {
-    setStatus("Could not find any header rows in the file.", "⚠️", "warning");
-    return;
+/**
+ * Detect the header row.
+ * Searches for known header markers such as "Datum" or "Date",
+ * or falls back to the row with the most populated columns.
+ */
+function detectHeaderRow(rows) {
+  for (let r = 0; r < Math.min(rows.length, 25); r++) {
+    const row = rows[r];
+    if (row.some((cell) => /^(datum|date)$/i.test(cell.trim()))) {
+      return r;
+    }
   }
 
-  headers = rawRows[headerRowIndex].map((h) => h.trim());
-
-  // Re-verify mappings against newly loaded headers
-  for (const field of FIELDS) {
-    // If current mapped index is out of bounds or unmapped, attempt auto-match
-    if (columnMapping[field.key] === -1 || columnMapping[field.key] >= headers.length) {
-      const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
-      columnMapping[field.key] = idx !== -1 ? idx : -1;
+  // Fallback: row with most non-empty columns
+  let bestIdx = 0;
+  let maxCount = 0;
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const count = rows[r].filter((c) => c.trim().length > 0).length;
+    if (count > maxCount) {
+      maxCount = count;
+      bestIdx = r;
     }
+  }
+  return bestIdx;
+}
+
+const STORAGE_KEY = "dienstplan_saved_mapping";
+
+function loadSavedMapping() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveMappingToStorage(mapping) {
+  try {
+    const toSave = {};
+    for (const field of FIELDS) {
+      const idx = mapping[field.key];
+      if (typeof idx === "number" && idx >= 0 && idx < headers.length) {
+        toSave[field.key] = {
+          name: headers[idx],
+          index: idx,
+        };
+      } else {
+        toSave[field.key] = { name: null, index: -1 };
+      }
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  } catch (e) {
+    // Ignore storage quota or access errors
+  }
+}
+
+/**
+ * Automatically match fields with headers.
+ * Prioritizes user's previously saved preferences before standard aliases.
+ */
+function initAutoMapping() {
+  const saved = loadSavedMapping();
+  columnMapping = {};
+
+  for (const field of FIELDS) {
+    let matchedIdx = -1;
+
+    // 1. Try matching with user's previously saved mapping for this field
+    if (saved && saved[field.key]) {
+      const savedItem = saved[field.key];
+      if (typeof savedItem.name === "string" && savedItem.name.trim()) {
+        const foundByName = headers.findIndex(
+          (h) => h.toLowerCase() === savedItem.name.toLowerCase().trim()
+        );
+        if (foundByName !== -1) {
+          matchedIdx = foundByName;
+        }
+      }
+      if (
+        matchedIdx === -1 &&
+        typeof savedItem.index === "number" &&
+        savedItem.index >= 0 &&
+        savedItem.index < headers.length
+      ) {
+        matchedIdx = savedItem.index;
+      }
+    }
+
+    // 2. Exact alias match
+    if (matchedIdx === -1) {
+      for (const alias of field.aliases) {
+        const idx = headers.findIndex((h) => h.toLowerCase() === alias.toLowerCase());
+        if (idx !== -1) {
+          matchedIdx = idx;
+          break;
+        }
+      }
+    }
+
+    // 3. Partial alias match if not found
+    if (matchedIdx === -1) {
+      for (const alias of field.aliases) {
+        const idx = headers.findIndex((h) => h.toLowerCase().includes(alias.toLowerCase()));
+        if (idx !== -1) {
+          matchedIdx = idx;
+          break;
+        }
+      }
+    }
+
+    columnMapping[field.key] = matchedIdx;
   }
 }
 
@@ -144,8 +230,13 @@ function indexToColLetter(idx) {
 // Modal handling
 function openSettingsModal() {
   tempMapping = { ...columnMapping };
-  renderPreviewTable();
+  if (currentFileName) {
+    modalDescEl.textContent = `File: ${currentFileName} (Header detected at row ${headerRowIndex + 1}). Adjust column mappings below; the sample calendar entry updates in real-time.`;
+  }
   renderMappingUI();
+  renderPreviewTable();
+  updateSampleEntryPreview();
+
   settingsModal.hidden = false;
   document.body.style.overflow = "hidden";
 }
@@ -161,16 +252,12 @@ modalCancelBtn.addEventListener("click", closeSettingsModal);
 
 modalApplyBtn.addEventListener("click", () => {
   columnMapping = { ...tempMapping };
+  saveMappingToStorage(columnMapping);
   closeSettingsModal();
-
-  if (rawRows.length > 0) {
-    processData();
-  } else {
-    setStatus("Column mapping saved. Choose an .xlsx file to import.", "✅", "success");
-  }
+  processData();
+  settingsBtn.disabled = false;
 });
 
-// Close modal when clicking outside or pressing Escape
 settingsModal.addEventListener("click", (e) => {
   if (e.target === settingsModal) {
     closeSettingsModal();
@@ -182,48 +269,6 @@ window.addEventListener("keydown", (e) => {
     closeSettingsModal();
   }
 });
-
-function renderPreviewTable() {
-  previewTableEl.innerHTML = "";
-
-  const thead = document.createElement("thead");
-  const headRow = document.createElement("tr");
-
-  headers.forEach((h, idx) => {
-    const th = document.createElement("th");
-    const colName = indexToColLetter(idx);
-    th.innerHTML = `<span class="col-badge">${colName}</span> ${escapeHtml(h) || `(Col ${idx + 1})`}`;
-    headRow.appendChild(th);
-  });
-  thead.appendChild(headRow);
-  previewTableEl.appendChild(thead);
-
-  const tbody = document.createElement("tbody");
-
-  if (rawRows.length > 0 && headerRowIndex !== -1) {
-    const dataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 6); // preview first 5 data rows
-    dataRows.forEach((row) => {
-      const tr = document.createElement("tr");
-      headers.forEach((_, idx) => {
-        const td = document.createElement("td");
-        td.textContent = row[idx] !== undefined ? row[idx] : "";
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-  } else {
-    // Show placeholder row before upload
-    const tr = document.createElement("tr");
-    const td = document.createElement("td");
-    td.colSpan = headers.length;
-    td.className = "preview-empty-hint";
-    td.textContent = "No file loaded yet. Standard column headers are shown above. Upload an .xlsx file to preview its rows.";
-    tr.appendChild(td);
-    tbody.appendChild(tr);
-  }
-
-  previewTableEl.appendChild(tbody);
-}
 
 function renderMappingUI() {
   mappingFieldsEl.innerHTML = "";
@@ -257,12 +302,160 @@ function renderMappingUI() {
 
     select.addEventListener("change", (e) => {
       tempMapping[field.key] = parseInt(e.target.value, 10);
+      updateSampleEntryPreview();
     });
 
     item.appendChild(label);
     item.appendChild(select);
     mappingFieldsEl.appendChild(item);
   }
+}
+
+function renderPreviewTable() {
+  previewTableEl.innerHTML = "";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+
+  headers.forEach((h, idx) => {
+    const th = document.createElement("th");
+    const colName = indexToColLetter(idx);
+    th.innerHTML = `<span class="col-badge">${colName}</span> ${escapeHtml(h) || `(Col ${idx + 1})`}`;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  previewTableEl.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+
+  if (rawRows.length > 0 && headerRowIndex !== -1) {
+    const dataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 6);
+    dataRows.forEach((row) => {
+      const tr = document.createElement("tr");
+      headers.forEach((_, idx) => {
+        const td = document.createElement("td");
+        td.textContent = row[idx] !== undefined ? row[idx] : "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  previewTableEl.appendChild(tbody);
+}
+
+/**
+ * Live preview of a single sample calendar entry using the current tempMapping.
+ */
+function updateSampleEntryPreview() {
+  if (!sampleEntryContainer) return;
+
+  const dataRows = rawRows.slice(headerRowIndex + 1);
+  let sampleEvent = null;
+  let lastDate = null;
+
+  for (const row of dataRows) {
+    const dateVal = tempMapping.date !== -1 ? (row[tempMapping.date] || "") : "";
+    const startVal = tempMapping.start !== -1 ? (row[tempMapping.start] || "") : "";
+    const endVal = tempMapping.end !== -1 ? (row[tempMapping.end] || "") : "";
+    const titleVal = tempMapping.title !== -1 ? (row[tempMapping.title] || "").trim() : "";
+    const roomVal = tempMapping.room !== -1 ? (row[tempMapping.room] || "").trim() : "";
+    const typeVal = tempMapping.type !== -1 ? (row[tempMapping.type] || "").trim() : "";
+
+    const parsedD = parseDateCell(dateVal);
+    if (parsedD) {
+      lastDate = parsedD;
+    }
+    const effectiveDate = parsedD || (dateVal.trim() === "" ? lastDate : null);
+    const startTime = parseTimeCell(startVal);
+
+    if (effectiveDate && startTime && titleVal) {
+      const startDT = new Date(
+        effectiveDate.getFullYear(),
+        effectiveDate.getMonth(),
+        effectiveDate.getDate(),
+        startTime.hours,
+        startTime.minutes,
+        0
+      );
+
+      let endDT = null;
+      let endUnknown = false;
+      const endTime = parseTimeCell(endVal);
+
+      if (endTime) {
+        endDT = new Date(
+          effectiveDate.getFullYear(),
+          effectiveDate.getMonth(),
+          effectiveDate.getDate(),
+          endTime.hours,
+          endTime.minutes,
+          0
+        );
+        if (endDT <= startDT) {
+          endDT.setDate(endDT.getDate() + 1);
+        }
+      } else {
+        endDT = new Date(startDT.getTime() + 3 * 3600 * 1000);
+        endUnknown = true;
+      }
+
+      sampleEvent = {
+        start: startDT,
+        end: endDT,
+        endUnknown,
+        title: titleVal,
+        room: roomVal,
+        type: typeVal,
+        category: getCategoryForType(typeVal),
+      };
+      break;
+    }
+  }
+
+  if (!sampleEvent) {
+    sampleEntryContainer.innerHTML = `
+      <div class="sample-warning">
+        <span>⚠️</span>
+        <span>Cannot generate preview entry. Please ensure <strong>Date</strong>, <strong>Start</strong>, and <strong>Title</strong> columns are correctly selected.</span>
+      </div>
+    `;
+    return;
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+  const dateFormatted = new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(sampleEvent.start);
+
+  const timeLabel = `${pad(sampleEvent.start.getHours())}:${pad(sampleEvent.start.getMinutes())}`;
+  const endLabel = `${pad(sampleEvent.end.getHours())}:${pad(sampleEvent.end.getMinutes())}${sampleEvent.endUnknown ? " (end unknown)" : ""}`;
+
+  sampleEntryContainer.innerHTML = `
+    <div class="sample-card">
+      <div class="sample-card-header">
+        <span class="sample-date-badge">📅 ${dateFormatted}</span>
+        <span class="sample-time-range">🕒 ${timeLabel} – ${endLabel}</span>
+      </div>
+      <div class="event-item ${sampleEvent.category.className}">
+        <input type="checkbox" checked disabled>
+        <div class="event-details">
+          <div class="event-top-row">
+            <span class="event-time">${timeLabel}</span>
+            ${sampleEvent.type ? `<span class="event-badge">${escapeHtml(sampleEvent.type)}</span>` : ""}
+          </div>
+          <span class="event-title">${escapeHtml(sampleEvent.title)}</span>
+        </div>
+      </div>
+      <div class="sample-card-meta">
+        ${sampleEvent.room ? `<span>📍 <strong>Room:</strong> ${escapeHtml(sampleEvent.room)}</span>` : "<span>📍 <em>Room: unmapped</em></span>"}
+        ${sampleEvent.type ? `<span>🏷️ <strong>Type:</strong> ${escapeHtml(sampleEvent.type)}</span>` : "<span>🏷️ <em>Type: unmapped</em></span>"}
+      </div>
+    </div>
+  `;
 }
 
 // Event Type Color-Coding Logic
@@ -318,14 +511,19 @@ function getCategoryForType(typeStr) {
   return { key: "other", name: "Other", className: "cat-other" };
 }
 
-function parseDateCell(val, lastDate) {
-  if (!val || !val.trim()) {
-    return lastDate ? new Date(lastDate.getTime()) : null;
-  }
+/**
+ * Robust date parser supporting:
+ * - DD.MM.YYYY and DD.MM.YY with optional day-of-week prefixes (e.g. "So, 01.11.26")
+ * - DD Mon YYYY / DD Mon YY (e.g. "01 Dez 2026")
+ * - Excel serial date numbers
+ * Returns null if the cell does not contain a recognizable date.
+ */
+function parseDateCell(val) {
+  if (!val) return null;
+  val = String(val).trim();
+  if (!val) return null;
 
-  val = val.trim();
-
-  // Check Excel serial number (e.g. 46357)
+  // 1. Excel serial number
   const num = Number(val);
   if (!isNaN(num) && num > 30000 && num < 100000) {
     const d = new Date(Date.UTC(1899, 11, 30));
@@ -333,39 +531,51 @@ function parseDateCell(val, lastDate) {
     return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
   }
 
-  // Check DD.MM.YYYY
-  const dotMatch = val.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  // 2. DD.MM.YYYY or DD.MM.YY anywhere in string (e.g. "So, 01.11.26" or "01.11.2026")
+  const dotMatch = val.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
   if (dotMatch) {
     const day = parseInt(dotMatch[1], 10);
     const month = parseInt(dotMatch[2], 10) - 1;
-    const year = parseInt(dotMatch[3], 10);
-    return new Date(year, month, day);
-  }
-
-  // Check "01 Dez 2026" or "1 Dez 2026"
-  const wordMatch = val.match(/^(\d{1,2})\.?\s+([A-Za-zÄäÖöÜü]+)\.?\s+(\d{4})$/);
-  if (wordMatch) {
-    const day = parseInt(wordMatch[1], 10);
-    const mStr = wordMatch[2].toLowerCase();
-    const year = parseInt(wordMatch[3], 10);
-    const month = GERMAN_MONTHS[mStr];
-    if (month !== undefined) {
+    let year = parseInt(dotMatch[3], 10);
+    if (year < 100) year += 2000;
+    if (month >= 0 && month < 12 && day >= 1 && day <= 31) {
       return new Date(year, month, day);
     }
   }
 
-  // Fallback: standard Date.parse
+  // 3. DD Mon YYYY / DD Mon YY (e.g. "01 Dez 2026")
+  const wordMatch = val.match(/(\d{1,2})\.?\s+([A-Za-zÄäÖöÜü]+)\.?\s+(\d{2,4})/);
+  if (wordMatch) {
+    const day = parseInt(wordMatch[1], 10);
+    const mStr = wordMatch[2].toLowerCase();
+    let year = parseInt(wordMatch[3], 10);
+    if (year < 100) year += 2000;
+    const month = GERMAN_MONTHS[mStr];
+    if (month !== undefined && day >= 1 && day <= 31) {
+      return new Date(year, month, day);
+    }
+  }
+
+  // 4. Fallback standard Date.parse (only if resolves to plausible date)
   const parsed = new Date(val);
-  if (!isNaN(parsed.getTime())) {
+  if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 2000) {
     return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   }
 
   return null;
 }
 
+/**
+ * Robust time parser. Returns null for empty, "?", "-?-", or invalid times.
+ */
 function parseTimeCell(val) {
   if (!val) return null;
   val = String(val).trim();
+
+  // If contains question mark or dash-only placeholder
+  if (/[?]/.test(val) || /^[-:\s]+$/.test(val)) {
+    return null;
+  }
 
   // Excel day fraction (e.g., 0.458333)
   const num = Number(val);
@@ -376,7 +586,7 @@ function parseTimeCell(val) {
     return { hours, minutes };
   }
 
-  const match = val.match(/^(\d{1,2}):(\d{2})/);
+  const match = val.match(/(\d{1,2}):(\d{2})/);
   if (match) {
     const hours = parseInt(match[1], 10);
     const minutes = parseInt(match[2], 10);
@@ -405,7 +615,7 @@ function processData() {
 
   const dataRows = rawRows.slice(headerRowIndex + 1);
 
-  dataRows.forEach((row, rowIndex) => {
+  dataRows.forEach((row) => {
     const dateVal = columnMapping.date !== -1 ? (row[columnMapping.date] || "") : "";
     const startVal = columnMapping.start !== -1 ? (row[columnMapping.start] || "") : "";
     const endVal = columnMapping.end !== -1 ? (row[columnMapping.end] || "") : "";
@@ -418,11 +628,11 @@ function processData() {
       return;
     }
 
-    const eventDate = parseDateCell(dateVal, lastSeenDate);
-    if (eventDate) {
-      lastSeenDate = eventDate;
+    const parsedD = parseDateCell(dateVal);
+    if (parsedD) {
+      lastSeenDate = parsedD;
     }
-
+    const eventDate = parsedD || (dateVal.trim() === "" ? lastSeenDate : null);
     const startTime = parseTimeCell(startVal);
 
     if (!eventDate || !startTime || !titleVal) {
@@ -452,7 +662,7 @@ function processData() {
         endTime.minutes,
         0
       );
-      // If end time is earlier or equal to start time, it spans past midnight
+      // Spans past midnight
       if (endDateTime <= startDateTime) {
         endDateTime.setDate(endDateTime.getDate() + 1);
       }
@@ -506,7 +716,6 @@ function renderLegend() {
     return;
   }
 
-  // Find all categories that actually appear in the events
   const presentCategories = new Set(parsedEvents.map((e) => e.category.key));
   const activeList = EVENT_CATEGORIES.filter((c) => presentCategories.has(c.key));
 
@@ -540,7 +749,7 @@ function updateStatus(skippedCount = 0) {
 
   let msg = `${selectedCount} of ${totalCount} appointments selected.`;
   if (skippedCount > 0) {
-    msg += ` (${skippedCount} rows skipped due to missing date, time, or title).`;
+    msg += ` (${skippedCount} non-event rows ignored).`;
   }
   setStatus(msg, "📅", "success");
 
@@ -551,7 +760,7 @@ function renderCalendar() {
   calendarEl.innerHTML = "";
 
   if (parsedEvents.length === 0) {
-    setStatus("No valid appointments found in the file.", "⚠️", "warning");
+    setStatus("No valid appointments found in the file with current mappings.", "⚠️", "warning");
     exportBtn.disabled = true;
     return;
   }
@@ -606,7 +815,6 @@ function renderCalendar() {
       grid.appendChild(blankCell);
     }
 
-    // Days map
     const dayEventsMap = new Map();
     for (const ev of events) {
       const dayNum = ev.start.getDate();

@@ -18,10 +18,10 @@
       </div>
       <div class="actions">
         <label class="btn btn-primary file-btn">
-          <span>Choose .xlsx File</span>
+          <span>Import .xlsx File</span>
           <input type="file" id="file" accept=".xlsx">
         </label>
-        <button id="settings-btn" class="btn btn-secondary" title="Configure column mapping">
+        <button id="settings-btn" class="btn btn-secondary" disabled title="Adjust column mapping">
           <span class="icon">⚙️</span>
           <span>Settings</span>
         </button>
@@ -36,7 +36,7 @@
   <div class="status-wrapper">
     <div class="status-chip" id="status-chip">
       <span class="status-icon" id="status-icon">ℹ️</span>
-      <span id="status">Select an .xlsx duty roster file above to begin.</span>
+      <span id="status">Click "Import .xlsx File" above to choose a duty roster file.</span>
     </div>
     <div id="calendar-legend" class="legend-bar" hidden></div>
   </div>
@@ -48,21 +48,20 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-header">
         <div>
-          <h2 id="modal-title">Column Mapping & Preview</h2>
-          <p class="modal-desc">Inspect your spreadsheet data and adjust which columns map to each calendar field.</p>
+          <h2 id="modal-title">Import Settings & Preview</h2>
+          <p id="modal-desc" class="modal-desc">Configure column mappings for your spreadsheet. A live preview of a calendar entry is shown below.</p>
         </div>
         <button id="modal-close" class="btn-icon" aria-label="Close settings">&times;</button>
       </div>
 
       <div class="modal-body">
-        <div class="preview-section">
+        <!-- Live Calendar Entry Preview -->
+        <div class="sample-entry-section">
           <div class="section-heading">
-            <h3>Data Preview</h3>
-            <span class="section-tag">First 5 data rows</span>
+            <h3>Sample Calendar Entry</h3>
+            <span class="section-tag">Live preview from file</span>
           </div>
-          <div class="table-container">
-            <table id="preview-table" class="preview-table"></table>
-          </div>
+          <div id="sample-entry-container" class="sample-entry-container"></div>
         </div>
 
         <div class="mapping-section">
@@ -72,11 +71,24 @@
           </div>
           <div id="mapping-fields" class="mapping-grid"></div>
         </div>
+
+        <div class="preview-section">
+          <div class="section-heading">
+            <h3>Data Preview</h3>
+            <span class="section-tag">First 5 rows from file</span>
+          </div>
+          <div class="table-container">
+            <table id="preview-table" class="preview-table"></table>
+          </div>
+        </div>
       </div>
 
       <div class="modal-footer">
-        <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
-        <button id="modal-apply-btn" class="btn btn-primary">Apply & Close</button>
+        <span class="save-note">💾 Saved locally for future imports</span>
+        <div class="footer-actions">
+          <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button id="modal-apply-btn" class="btn btn-primary">Confirm & View Calendar</button>
+        </div>
       </div>
     </div>
   </div>
