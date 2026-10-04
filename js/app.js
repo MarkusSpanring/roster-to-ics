@@ -43,39 +43,57 @@ let defaultMonthYear = "dienstplan";
 // Elements
 const fileInput = document.getElementById("file");
 const exportBtn = document.getElementById("export");
-const mappingSection = document.getElementById("mapping");
+const settingsBtn = document.getElementById("settings-btn");
 const statusEl = document.getElementById("status");
+const statusChipEl = document.getElementById("status-chip");
+const statusIconEl = document.getElementById("status-icon");
 const calendarEl = document.getElementById("calendar");
+
+// Modal Elements
+const settingsModal = document.getElementById("settings-modal");
+const modalCloseBtn = document.getElementById("modal-close");
+const modalCancelBtn = document.getElementById("modal-cancel-btn");
+const modalApplyBtn = document.getElementById("modal-apply-btn");
+const previewTableEl = document.getElementById("preview-table");
+const mappingFieldsEl = document.getElementById("mapping-fields");
+
+let tempMapping = {};
 
 fileInput.addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  statusEl.textContent = "Reading spreadsheet...";
+  setStatus("Reading spreadsheet...", "⏳", "loading");
   exportBtn.disabled = true;
+  settingsBtn.disabled = true;
   calendarEl.innerHTML = "";
-  mappingSection.innerHTML = "";
-  mappingSection.hidden = true;
 
   try {
     rawRows = await XlsxReader.read(file);
     if (!rawRows || rawRows.length === 0) {
-      statusEl.textContent = "The uploaded file is empty.";
+      setStatus("The uploaded file is empty.", "⚠️", "warning");
       return;
     }
 
     initColumnMapping();
+    settingsBtn.disabled = false;
     processData();
   } catch (err) {
     console.error(err);
-    statusEl.textContent = `Error reading file: ${err.message}`;
+    setStatus(`Error reading file: ${err.message}`, "❌", "error");
   }
 });
+
+function setStatus(text, icon = "ℹ️", state = "default") {
+  statusEl.textContent = text;
+  statusIconEl.textContent = icon;
+  statusChipEl.className = `status-chip ${state}`;
+}
 
 function initColumnMapping() {
   headerRowIndex = rawRows.findIndex((row) => row.some((cell) => cell.trim().length > 0));
   if (headerRowIndex === -1) {
-    statusEl.textContent = "Could not find any header rows.";
+    setStatus("Could not find any header rows.", "⚠️", "warning");
     return;
   }
 
@@ -87,21 +105,94 @@ function initColumnMapping() {
     const idx = headers.findIndex((h) => h.toLowerCase() === field.default.toLowerCase());
     columnMapping[field.key] = idx !== -1 ? idx : -1;
   }
+}
 
+function indexToColLetter(idx) {
+  let letter = "";
+  while (idx >= 0) {
+    letter = String.fromCharCode((idx % 26) + 65) + letter;
+    idx = Math.floor(idx / 26) - 1;
+  }
+  return letter;
+}
+
+// Modal handling
+function openSettingsModal() {
+  tempMapping = { ...columnMapping };
+  renderPreviewTable();
   renderMappingUI();
+  settingsModal.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+function closeSettingsModal() {
+  settingsModal.hidden = true;
+  document.body.style.overflow = "";
+}
+
+settingsBtn.addEventListener("click", openSettingsModal);
+modalCloseBtn.addEventListener("click", closeSettingsModal);
+modalCancelBtn.addEventListener("click", closeSettingsModal);
+
+modalApplyBtn.addEventListener("click", () => {
+  columnMapping = { ...tempMapping };
+  closeSettingsModal();
+  processData();
+});
+
+// Close modal when clicking outside or pressing Escape
+settingsModal.addEventListener("click", (e) => {
+  if (e.target === settingsModal) {
+    closeSettingsModal();
+  }
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsModal.hidden) {
+    closeSettingsModal();
+  }
+});
+
+function renderPreviewTable() {
+  previewTableEl.innerHTML = "";
+
+  const thead = document.createElement("thead");
+  const headRow = document.createElement("tr");
+
+  headers.forEach((h, idx) => {
+    const th = document.createElement("th");
+    const colName = indexToColLetter(idx);
+    th.innerHTML = `<span class="col-badge">${colName}</span> ${h || `(Col ${idx + 1})`}`;
+    headRow.appendChild(th);
+  });
+  thead.appendChild(headRow);
+  previewTableEl.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  const dataRows = rawRows.slice(headerRowIndex + 1, headerRowIndex + 6); // preview first 5 data rows
+
+  dataRows.forEach((row) => {
+    const tr = document.createElement("tr");
+    headers.forEach((_, idx) => {
+      const td = document.createElement("td");
+      td.textContent = row[idx] !== undefined ? row[idx] : "";
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  previewTableEl.appendChild(tbody);
 }
 
 function renderMappingUI() {
-  mappingSection.innerHTML = "<h3>Column Mapping</h3>";
-  const grid = document.createElement("div");
-  grid.className = "mapping-grid";
+  mappingFieldsEl.innerHTML = "";
 
   for (const field of FIELDS) {
     const item = document.createElement("div");
     item.className = "mapping-item";
 
     const label = document.createElement("label");
-    label.textContent = `${field.label}${field.required ? " *" : ""}:`;
+    label.innerHTML = `${field.label}${field.required ? ' <span class="req">*</span>' : ""}:`;
     label.htmlFor = `map-${field.key}`;
 
     const select = document.createElement("select");
@@ -115,25 +206,22 @@ function renderMappingUI() {
     headers.forEach((h, idx) => {
       const opt = document.createElement("option");
       opt.value = String(idx);
-      opt.textContent = `${h || `(Column ${idx + 1})`}`;
-      if (columnMapping[field.key] === idx) {
+      const colLetter = indexToColLetter(idx);
+      opt.textContent = `[${colLetter}] ${h || `Column ${idx + 1}`}`;
+      if (tempMapping[field.key] === idx) {
         opt.selected = true;
       }
       select.appendChild(opt);
     });
 
     select.addEventListener("change", (e) => {
-      columnMapping[field.key] = parseInt(e.target.value, 10);
-      processData();
+      tempMapping[field.key] = parseInt(e.target.value, 10);
     });
 
     item.appendChild(label);
     item.appendChild(select);
-    grid.appendChild(item);
+    mappingFieldsEl.appendChild(item);
   }
-
-  mappingSection.appendChild(grid);
-  mappingSection.hidden = false;
 }
 
 function parseDateCell(val, lastDate) {
@@ -146,7 +234,6 @@ function parseDateCell(val, lastDate) {
   // Check Excel serial number (e.g. 46357)
   const num = Number(val);
   if (!isNaN(num) && num > 30000 && num < 100000) {
-    // Excel base date: 1899-12-30 (due to leap year 1900 bug)
     const d = new Date(Date.UTC(1899, 11, 30));
     d.setUTCDate(d.getUTCDate() + Math.floor(num));
     return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
@@ -210,7 +297,7 @@ function parseTimeCell(val) {
 function processData() {
   for (const field of FIELDS) {
     if (field.required && columnMapping[field.key] === -1) {
-      statusEl.textContent = `Please select a column for required field: ${field.label}`;
+      setStatus(`Missing mapping for required field: ${field.label}. Open Settings to select.`, "⚠️", "warning");
       calendarEl.innerHTML = "";
       exportBtn.disabled = true;
       return;
@@ -323,7 +410,7 @@ function updateStatus(skippedCount = 0) {
   if (skippedCount > 0) {
     msg += ` (${skippedCount} rows skipped due to missing date, time, or title).`;
   }
-  statusEl.textContent = msg;
+  setStatus(msg, "📅", "success");
 
   exportBtn.disabled = selectedCount === 0;
 }
@@ -332,7 +419,7 @@ function renderCalendar() {
   calendarEl.innerHTML = "";
 
   if (parsedEvents.length === 0) {
-    statusEl.textContent = "No valid appointments found in the file.";
+    setStatus("No valid appointments found in the file.", "⚠️", "warning");
     exportBtn.disabled = true;
     return;
   }
@@ -441,7 +528,7 @@ function renderCalendar() {
 
         const textSpan = document.createElement("span");
         textSpan.className = "event-title";
-        textSpan.textContent = `${timeLabel} ${ev.title}`;
+        textSpan.innerHTML = `<strong class="event-time">${timeLabel}</strong> ${escapeHtml(ev.title)}`;
 
         // Tooltip text
         const tooltipLines = [
@@ -464,6 +551,16 @@ function renderCalendar() {
     monthContainer.appendChild(grid);
     calendarEl.appendChild(monthContainer);
   }
+}
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 exportBtn.addEventListener("click", () => {

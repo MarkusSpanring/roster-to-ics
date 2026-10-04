@@ -9,24 +9,76 @@
 <body>
   <header class="app-header">
     <div class="header-content">
-      <h1>Duty Roster → Calendar</h1>
+      <div class="brand">
+        <div class="brand-icon">📅</div>
+        <div>
+          <h1>Duty Roster → Calendar</h1>
+          <p class="subtitle">Convert spreadsheets to calendar events</p>
+        </div>
+      </div>
       <div class="actions">
-        <label class="file-btn">
+        <label class="btn btn-primary file-btn">
           <span>Choose .xlsx File</span>
           <input type="file" id="file" accept=".xlsx">
         </label>
-        <button id="export" class="export-btn" disabled>Export ICS</button>
+        <button id="settings-btn" class="btn btn-secondary" disabled title="Configure column mapping">
+          <span class="icon">⚙️</span>
+          <span>Settings</span>
+        </button>
+        <button id="export" class="btn btn-success export-btn" disabled>
+          <span class="icon">📥</span>
+          <span>Export ICS</span>
+        </button>
       </div>
     </div>
   </header>
 
-  <section id="mapping" class="mapping-section" hidden></section>
-
-  <div class="status-bar">
-    <p id="status">Select an .xlsx duty roster file above to begin.</p>
+  <div class="status-wrapper">
+    <div class="status-chip" id="status-chip">
+      <span class="status-icon" id="status-icon">ℹ️</span>
+      <span id="status">Select an .xlsx duty roster file above to begin.</span>
+    </div>
   </div>
 
   <main id="calendar" class="calendar-main"></main>
+
+  <!-- Settings & Preview Modal -->
+  <div id="settings-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="modal-title">Column Mapping & Preview</h2>
+          <p class="modal-desc">Inspect your spreadsheet data and adjust which columns map to each calendar field.</p>
+        </div>
+        <button id="modal-close" class="btn-icon" aria-label="Close settings">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="preview-section">
+          <div class="section-heading">
+            <h3>Data Preview</h3>
+            <span class="section-tag">First 5 data rows</span>
+          </div>
+          <div class="table-container">
+            <table id="preview-table" class="preview-table"></table>
+          </div>
+        </div>
+
+        <div class="mapping-section">
+          <div class="section-heading">
+            <h3>Field Mapping</h3>
+            <span class="section-tag">Assign columns to fields</span>
+          </div>
+          <div id="mapping-fields" class="mapping-grid"></div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+        <button id="modal-apply-btn" class="btn btn-primary">Apply & Close</button>
+      </div>
+    </div>
+  </div>
 
   <script src="js/xlsx.js"></script>
   <script src="js/ics.js"></script>
